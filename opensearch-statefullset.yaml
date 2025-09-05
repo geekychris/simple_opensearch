@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+  namespace: default
+  labels:
+    app: opensearch
+spec:
+  serviceName: opensearch
+  replicas: 1  # Increase for production clusters
+  selector:
+    matchLabels:
+      app: opensearch
+  template:
+    metadata:
+      labels:
+        app: opensearch  
+    spec:
+      securityContext:
+        fsGroup: 1000  # OpenSearch process uses this GID
+      initContainers:
+        - name: fix-permissions
+          image: busybox
+          command: ["sh", "-c", "chown -R 1000:1000 /usr/share/opensearch/data"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/opensearch/data
+        - name: increase-vm-max-map
+          image: busybox
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+      containers:
+        - name: opensearch
+          image: opensearchproject/opensearch:latest 
+          #image: opensearchproject/opensearch:2.9.0
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 500m
+              memory: 3Gi
+          ports:
+            - containerPort: 9200
+              name: http
+              protocol: TCP
+            - containerPort: 9300
+              name: transport
+              protocol: TCP
+          env:
+          
+            - name: _JAVA_OPTIONS
+              #value: "-Xms2g -Xmx2g"
+              value: "-XX:UseSVE=0 -Xms2g -Xmx2g"
+            - name: cluster.name
+              value: opensearch-cluster
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: discovery.seed_hosts
+              value: "opensearch-0.opensearch"
+            - name: OPENSEARCH_JAVA_OPTS
+              value: "-Xms2g -Xmx2g"
+            - name: cluster.initial_master_nodes
+              value: "opensearch-0"
+            - name: bootstrap.memory_lock
+              value: "false"
+            - name: DISABLE_INSTALL_DEMO_CONFIG
+              value: "true"
+            - name: DISABLE_SECURITY_PLUGIN
+              value: "true"
+            - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: opensearch-credentials
+                  key: admin-password
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/opensearch/data
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              scheme: HTTP  # Using HTTP since security plugin is disabled
+              path: /_cluster/health?local=true
+              port: 9200
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              scheme: HTTP  # Using HTTP since security plugin is disabled
+              path: /_cluster/health?local=true
+              port: 9200
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            timeoutSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: opensearch-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  namespace: default
+  labels:
+    app: opensearch
+spec:
+  selector:
+    app: opensearch
+  ports:
+    - port: 9200
+      name: http
+      targetPort: 9200
+    - port: 9300
+      name: transport
+      targetPort: 9300
+  type: ClusterIP
+
+---
+# For external access (optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch-external
+  namespace: default
+  labels:
+    app: opensearch
+spec:
+  selector:
+    app: opensearch
+  ports:
+    - port: 9200
+      name: http
+      targetPort: 9200
+      nodePort: 30920  # OpenSearch will be available on host:30920
+  type: NodePort
+
