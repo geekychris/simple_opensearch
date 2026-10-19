@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Simple Opensearch logo" width="180">
+</p>
+
 # OpenSearch Kubernetes Deployment
 
 This repository contains Kubernetes manifests for deploying OpenSearch.
